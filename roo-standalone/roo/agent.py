@@ -136,9 +136,12 @@ Respond with ONLY the skill name (e.g., "connect_users" or "none"):"""
             ])
             
             skill_name = response.content.strip().lower()
+            # Normalize: both underscores and hyphens should match
+            skill_name_normalized = skill_name.replace("_", "-")
             
             for skill in self.skills:
-                if skill.name.lower() == skill_name:
+                skill_normalized = skill.name.lower().replace("_", "-")
+                if skill_normalized == skill_name_normalized:
                     return skill
             
             return None
