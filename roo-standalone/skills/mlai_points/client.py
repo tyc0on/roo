@@ -28,6 +28,19 @@ class PointsClient:
         
         # Cache admin status to reduce API calls
         self._admin_cache: Dict[str, bool] = {}
+
+    def _clean_slack_id(self, user_id: str) -> str:
+        """Clean a Slack ID or mention string to extract the ID."""
+        if not user_id:
+            return user_id
+        # Handle <@U12345> format
+        if user_id.startswith("<@") and user_id.endswith(">"):
+            parts = user_id[2:-1].split("|")
+            return parts[0]
+        # Handle @U12345 format
+        if user_id.startswith("@"):
+            return user_id[1:]
+        return user_id
     
     @property
     def headers(self) -> dict:
@@ -122,8 +135,9 @@ class PointsClient:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self._points_base}/tasks/{task_id}/claim/",
-                json={"slack_user_id": slack_user_id},
+                json={"slack_user_id": self._clean_slack_id(slack_user_id)},
                 headers=self.headers,
+
                 timeout=10.0
             )
             response.raise_for_status()
@@ -395,8 +409,9 @@ class PointsClient:
         """Direct award a task (claim + approve) to a user (admin only)."""
         payload = {
             "created_by_user_id": admin_slack_id,
-            "assigned_to_user_id": target_slack_id,
+            "assigned_to_user_id": self._clean_slack_id(target_slack_id),
         }
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self._points_base}/tasks/{task_id}/award/",
@@ -417,8 +432,10 @@ class PointsClient:
         """Manually award or deduct points (admin only)."""
         payload = {
             "admin_slack_id": admin_slack_id,
-            "target_slack_id": target_slack_id,
+            "admin_slack_id": admin_slack_id,
+            "target_slack_id": self._clean_slack_id(target_slack_id),
             "points": points,
+
             "reason": reason,
         }
         async with httpx.AsyncClient() as client:

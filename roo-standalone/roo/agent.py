@@ -93,10 +93,15 @@ class RooAgent:
             }
     
     def _clean_mention(self, text: str) -> str:
-        """Remove @Roo mention and clean up the message."""
+        """Remove @Roo mention and clean up the message.
+        
+        Only removes the FIRST user mention (which is Roo's @mention).
+        Preserves all other user mentions for parameter extraction.
+        """
         import re
-        # Remove Slack user mention format <@U1234ABC>
-        cleaned = re.sub(r'<@[A-Z0-9]+>', '', text)
+        # Only remove the FIRST Slack user mention (Roo's own mention)
+        # This preserves other user mentions like the target_user in award commands
+        cleaned = re.sub(r'<@[A-Z0-9]+>', '', text, count=1)
         # Remove extra whitespace
         cleaned = ' '.join(cleaned.split())
         return cleaned.strip()
