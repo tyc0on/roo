@@ -770,15 +770,22 @@ Keep the response concise but informative."""
         # =====================================================================
         
         elif action == "create_task":
-            title = params.get("title", "")
-            points = params.get("points", 1)
+            # 1. Parameter Aliases
+            title = params.get("task_title") or params.get("title") or params.get("submission_text")
+            points = params.get("points")
             description = params.get("description", "")
-            portfolio = params.get("portfolio", "events")
+            portfolio = params.get("portfolio", "general")
             due_date = params.get("due_date")
+            assigned_to = params.get("assigned_to_user_id") or params.get("target_user")
             
+            # 2. Validation
             if not title:
-                return "What's the task? I need at least a title (e.g., \"create task title='Fix docs' points=3\")"
+                return "G'day! I need a task title to create the task, mate. (e.g., \"create task 'Fix docs' 5 points\")"
             
+            if not points:
+                return "Crikey! You need to specify how many points this task is worth."
+            
+            # 3. Execution
             result = await client.create_task(
                 admin_slack_id=user_id,
                 title=title,
@@ -786,12 +793,26 @@ Keep the response concise but informative."""
                 description=description,
                 portfolio=portfolio,
                 due_date=due_date,
+                assigned_to_user_id=assigned_to,
                 slack_channel_id=channel_id,
                 slack_thread_ts=thread_ts
             )
             
+            # 4. Response Handling
+            if result.get("error") == "forbidden":
+                return "Sorry mate, but I can't create tasks. You need to be a Points Admin for that! If you reckon you should have access, have a chat with the committee. 🤔"
+            
             task_id = result.get("id")
-            return f"Task created! **#{task_id} - {title}** ({points} pts) 📂 {portfolio}\n\nVolunteers can claim it with \"task claim {task_id}\""
+            pts = result.get("points", points)
+            port = result.get("portfolio", portfolio)
+            
+            assigned_msg = ""
+            if result.get("assigned_to_user_id"):
+                assigned_msg = f" and assigned to <@{result.get('assigned_to_user_id')}>"
+            elif assigned_to:
+                 assigned_msg = f" and assigned to <@{client._clean_slack_id(assigned_to)}>"
+            
+            return f"✅ Beauty! Created task **{title}** worth **{pts} points**{assigned_msg}. Task ID: #{task_id}"
         
         elif action == "view_rate_card":
              card = await client.get_rate_card()

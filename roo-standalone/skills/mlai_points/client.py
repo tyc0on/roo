@@ -375,6 +375,7 @@ class PointsClient:
         description: str = "",
         portfolio: str = "events",
         due_date: Optional[str] = None,
+        assigned_to_user_id: Optional[str] = None,
         slack_channel_id: Optional[str] = None,
         slack_thread_ts: Optional[str] = None
     ) -> dict:
@@ -389,6 +390,9 @@ class PointsClient:
         }
         if due_date:
             payload["due_date"] = due_date
+        if assigned_to_user_id:
+            payload["assigned_to_user_id"] = self._clean_slack_id(assigned_to_user_id)
+            payload["status"] = "claimed"
         if slack_channel_id:
             payload["slack_channel_id"] = slack_channel_id
         if slack_thread_ts:
@@ -401,6 +405,10 @@ class PointsClient:
                 headers=self.admin_headers,
                 timeout=10.0
             )
+            # Handle 403 gracefully to allow custom error messages
+            if response.status_code == 403:
+                return {"error": "forbidden", "message": response.json().get("error")}
+                
             response.raise_for_status()
             return response.json()
     

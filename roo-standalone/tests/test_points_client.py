@@ -159,6 +159,8 @@ class TestAdminEndpoints:
             
             # Mock is_admin to return True
             client.is_admin = AsyncMock(return_value=True)
+            # Mock allowance check to pass
+            client.get_admin_allowance = AsyncMock(return_value={'allowance': 100, 'remaining': 50})
             
             result = await client.award_points(
                 admin_slack_id="UADMIN",
@@ -198,6 +200,59 @@ class TestAdminEndpoints:
             
             assert result["id"] == 42
             assert result["status"] == "open"
+            
+    @pytest.mark.asyncio
+    async def test_create_task_with_assignment(self, client):
+        """Test task creation with assignment."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "id": 43,
+            "title": "Assigned Task",
+            "points": 5,
+            "assigned_to_user_id": "UALICE",
+            "status": "claimed"
+        }
+        mock_response.raise_for_status = MagicMock()
+        
+        with patch("httpx.AsyncClient") as MockClient:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            MockClient.return_value = mock_client
+            
+            result = await client.create_task(
+                admin_slack_id="UADMIN",
+                title="Assigned Task",
+                points=5,
+                assigned_to_user_id="@alice"
+            )
+            
+            assert result["assigned_to_user_id"] == "UALICE"
+            assert result["status"] == "claimed"
+            
+    @pytest.mark.asyncio
+    async def test_create_task_forbidden(self, client):
+        """Test task creation when not authorized (403)."""
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.json.return_value = {"error": "Only Points Admins can create tasks"}
+        
+        with patch("httpx.AsyncClient") as MockClient:
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            MockClient.return_value = mock_client
+            
+            result = await client.create_task(
+                admin_slack_id="UNOTADMIN",
+                title="Forbidden Task",
+                points=3
+            )
+            
+            assert result["error"] == "forbidden"
+            assert "Only Points Admins" in result["message"]
 
 
 class TestErrorHandling:

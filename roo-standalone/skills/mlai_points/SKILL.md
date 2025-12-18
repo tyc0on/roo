@@ -57,6 +57,9 @@ Example responses:
 - **target_slack_id**: (Alias for target_user) A single Slack User ID
 - **submission_text**: Description of work completed for task submissions
 - **reward_code**: Code for reward redemption requests
+- **task_title**: (Admin) Title for a new task
+- **portfolio**: (Admin) Portfolio for a new task (tech, marketing, events, general, governance)
+- **assigned_to_user_id**: (Admin) Optional Slack User ID to assign a new task to (e.g. U012ABC or @alice)
 
 ## Command Recognition
 
@@ -75,7 +78,8 @@ Parse user messages to identify the action and parameters:
 | `rewards`, `points rewards` | list_rewards | "What rewards are available?", "@Roo points rewards" |
 | `reward request <code>` | request_reward | "I want to get the HOTDESK_DAY reward" |
 | `buy a <item>` | request_reward | "Can I buy a sticker?" (LLM infers code) |
-| `task create ...` | create_task | (Admin) "Create task: Fix docs, 3 points" |
+| `buy a <item>` | request_reward | "Can I buy a sticker?" (LLM infers code) |
+| `task create ...`, `make a task ...` | create_task | (Admin) "Create task called 'Fix docs' with 3 points" |
 | `task approve <id>` | approve_task | (Admin) "Approve task 42" |
 | `points award @user +5 reason` | award_points | (Admin) "Give @sam 5 points for helping out" |
 | `reward @user for <activity>` | award_points | (Admin) "Reward @sam for newsletter" (suggests points from rate card) |
