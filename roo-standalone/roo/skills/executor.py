@@ -666,6 +666,15 @@ Keep the response concise but informative."""
         
         elif action == "book_coworking":
             booking_date = params.get("date")
+            
+            # Normalize date aliases
+            if booking_date:
+                from datetime import date, timedelta
+                if booking_date.lower() == "today":
+                    booking_date = date.today().isoformat()
+                elif booking_date.lower() == "tomorrow":
+                    booking_date = (date.today() + timedelta(days=1)).isoformat()
+            
             if not booking_date:
                 import re
                 match = re.search(r'(\d{4}-\d{2}-\d{2})', text)
@@ -691,6 +700,14 @@ Keep the response concise but informative."""
         elif action == "cancel_coworking":
             booking_date = params.get("date")
             booking_id = params.get("booking_id")
+            
+            # Normalize date aliases
+            if booking_date:
+                from datetime import date, timedelta
+                if booking_date.lower() == "today":
+                    booking_date = date.today().isoformat()
+                elif booking_date.lower() == "tomorrow":
+                    booking_date = (date.today() + timedelta(days=1)).isoformat()
             
             if not booking_date and not booking_id:
                 import re

@@ -50,15 +50,17 @@ Parse user messages to identify the action and parameters:
 
 | Pattern | Action | Example |
 |---------|--------|---------|
-| `points balance` | balance | "What's my points balance?" |
-| `points history` | history | "Show my point history" |
+| `points`, `balance` | balance | "What's my points balance?", "@Roo points" |
+| `points earn` | list_tasks | "How do I earn points?", "@Roo points earn" |
 | `tasks`, `tasks open` | list_tasks | "What tasks are available?" |
 | `task claim <id>` | claim_task | "I'll claim task 42" |
 | `task submit <id> <text>` | submit_task | "Task 42 done, fixed the typo" |
 | `coworking check <date>` | check_coworking | "Is there space on Dec 20?" |
-| `coworking book <date>` | book_coworking | "Book me in for 2025-12-20" |
-| `coworking cancel <date>` | cancel_coworking | "Cancel my booking for Friday" |
-| `rewards` | list_rewards | "What rewards are available?" |
+| `coworking book <date/today>` | book_coworking | "Book me in for today", "@Roo coworking book today" |
+| `coworking cancel <date>` | cancel_coworking | "Cancel my booking for Friday", "@Roo coworking cancel" |
+| `rewards`, `points rewards` | list_rewards | "What rewards are available?", "@Roo points rewards" |
+| `reward request <code>` | request_reward | "I want to get the HOTDESK_DAY reward" |
+| `buy a <item>` | request_reward | "Can I buy a sticker?" (LLM infers code) |
 | `reward request <code>` | request_reward | "I want to get the HOTDESK_DAY reward" |
 | `task create ...` | create_task | (Admin) "Create task: Fix docs, 3 points" |
 | `task approve <id>` | approve_task | (Admin) "Approve task 42" |
