@@ -65,7 +65,13 @@ class RooAgent:
         
         print(f"🔍 Processing: {clean_text[:100]}...")
         
-        # Select appropriate skill
+        # 1. Try Fast Path (Direct Command Execution)
+        fast_result = await self._try_fast_path(clean_text, user_id, channel_id, thread_ts)
+        if fast_result:
+            print(f"⚡ Fast Path matched!")
+            return fast_result
+        
+        # 2. Select appropriate skill (LLM Routing)
         skill = await self._select_skill(clean_text)
         
         if skill:
@@ -92,6 +98,141 @@ class RooAgent:
                 "data": None
             }
     
+    async def _try_fast_path(
+        self, 
+        text: str, 
+        user_id: str,
+        channel_id: Optional[str] = None,
+        thread_ts: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Attempt to execute a direct command without LLM.
+        
+        Regex matches specific high-frequency commands.
+        """
+        import re
+        from datetime import date, timedelta
+        
+        text_lower = text.lower().strip()
+        
+        # --- Points Skill Fast Paths ---
+        
+        # 1. Balance Check: "points", "balance", "my points"
+        if re.match(r'^(?:points|balance|my points)$', text_lower):
+            return await self._execute_fast_points(user_id, "balance")
+            
+        # 2. Earn/Tasks: "points earn", "earn points", "tasks"
+        if re.match(r'^(?:points\s+earn|earn\s+points|tasks|ways\s+to\s+earn)$', text_lower):
+            return await self._execute_fast_points(user_id, "list_tasks")
+
+        # 3. Rewards: "points rewards", "rewards"
+        if re.match(r'^(?:points\s+rewards|rewards)$', text_lower):
+            return await self._execute_fast_points(user_id, "list_rewards")
+
+        # 4. Coworking Book Today: "coworking book today"
+        if re.match(r'^coworking\s+book\s+today$', text_lower):
+            today = date.today().isoformat()
+            return await self._execute_fast_points(
+                user_id, "book_coworking", 
+                date=today, channel_id=channel_id
+            )
+
+        # 5. Coworking Cancel: "coworking cancel" (assumes today/upcoming)
+        if re.match(r'^coworking\s+cancel$', text_lower):
+            # For "cancel", we might need to handle logic in the client or pass a flag
+            # The user requirement was "will cancel booking for today"
+            today = date.today().isoformat()
+            return await self._execute_fast_points(
+                user_id, "cancel_coworking", 
+                date=today
+            )
+            
+        return None
+
+    async def _execute_fast_points(self, user_id: str, action: str, **kwargs) -> Dict[str, Any]:
+        """Execute a Points action directly."""
+        # Find the skill to get the client class
+        skill = next((s for s in self.skills if s.name == "mlai-points"), None)
+        if not skill:
+            return None
+            
+        ClientClass = skill.get_client_class("PointsClient")
+        if not ClientClass:
+            return None
+            
+        try:
+            settings = get_settings()
+            client = ClientClass(
+                base_url=settings.MLAI_BACKEND_URL,
+                api_key=settings.MLAI_API_KEY
+            )
+            
+            # Re-use the executor's logic for response formatting to DRY
+            # We need to instantiate the executor just to access the helper method
+            # Note: This relies on _handle_points_action being available/public-ish
+            # Since it's protected, we might duplicate simple formatting here for speed/isolation
+            
+            if action == "balance":
+                data = await client.get_balance(user_id)
+                msg = (
+                    f"G'day mate! Here's your points summary:\n\n"
+                    f"💰 **Current Balance:** {data.get('balance', 0)} points\n"
+                    f"📈 **Lifetime Earned:** {data.get('lifetime_earned', 0)} points\n"
+                    f"Nice work! Check out `@Roo points earn` to get more! 🦘"
+                )
+                
+            elif action == "list_tasks":
+                tasks = await client.list_tasks(status="open")
+                if not tasks:
+                    msg = "No open tasks at the moment. Check back soon! 🦘"
+                else:
+                    lines = ["📋 **Open Tasks:**\n"]
+                    for t in tasks[:10]:
+                        lines.append(f"• **#{t['id']}** - {t['title']} ({t['points']} pts) 📂 {t['portfolio']}")
+                    lines.append("\nTo claim one, just say `@Roo claim task <ID>`")
+                    msg = "\n".join(lines)
+            
+            elif action == "list_rewards":
+                rewards = await client.list_rewards(user_id)
+                if not rewards:
+                    msg = "No rewards available right now."
+                else:
+                    lines = ["🎁 **Rewards Menu:**\n"]
+                    for r in rewards:
+                        lines.append(f"• **{r['code']}** - {r['name']} ({r['cost_points']} pts)")
+                    lines.append("\nAsk me to `buy a sticker` or similar to redeem!")
+                    msg = "\n".join(lines)
+            
+            elif action == "book_coworking":
+                booking_date = kwargs.get("date")
+                res = await client.book_coworking(user_id, booking_date, kwargs.get("channel_id"))
+                msg = f"You beauty! 🎉\nBooked you in for **{booking_date}**. Cost: {res.get('points_cost', 1)} point."
+                
+            elif action == "cancel_coworking":
+                booking_date = kwargs.get("date")
+                res = await client.cancel_coworking(user_id, booking_date=booking_date)
+                ref = res.get("refund_amount", 0)
+                msg = f"No worries, cancelled your booking for {booking_date}. Refunded {ref} points."
+                
+            else:
+                msg = "Unknown fast action."
+
+            return {
+                "message": msg,
+                "skill_used": "mlai-points (fast)",
+                "data": {"action": action}
+            }
+            
+        except Exception as e:
+            print(f"❌ Fast path error: {e}")
+            # Fallback to normal flow if fast path fails? Or just return error?
+            # Return None to let LLM try? No, if we matched regex, we should probably fail gracefully here.
+            return {
+                "message": "Sorry mate, having trouble connecting to the points system right now. Try again in a tic!",
+                "skill_used": "mlai-points (fast-error)",
+                "data": {"error": str(e)}
+            }
+
     def _clean_mention(self, text: str) -> str:
         """Remove only Roo's @mention, preserving other user mentions.
         
