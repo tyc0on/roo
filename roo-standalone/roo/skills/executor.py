@@ -1004,6 +1004,26 @@ Keep the response concise but informative."""
             errors = []
             for target_id in target_slack_ids:
                 try:
+                    # Deduplication: Link Slack ID to existing email user if needed
+                    try:
+                        db = get_db()
+                        # Check if this Slack ID is already known
+                        existing_user_id = await db.get_user_by_slack_id(target_id)
+                        
+                        if not existing_user_id:
+                            # Not found by Slack ID -> Check if we know this user by email
+                            from ..slack_client import get_user_info
+                            u_info = get_user_info(target_id)
+                            u_email = u_info.get("email")
+                            
+                            if u_email:
+                                email_user_id = await db.get_user_by_email(u_email)
+                                if email_user_id:
+                                    print(f"🔗 Found existing user {email_user_id} for email {u_email}. Linking Slack ID {target_id}...")
+                                    await db.link_user_slack_id(email_user_id, target_id)
+                    except Exception as e:
+                        print(f"⚠️ User linking failed (continuing to award): {e}")
+
                     result = await client.award_points(user_id, target_id, int(points), reason)
                     new_balance = result.get("new_balance", 0)
                     results.append({"user": target_id, "new_balance": new_balance})
