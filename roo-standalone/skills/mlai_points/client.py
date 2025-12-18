@@ -608,3 +608,183 @@ class PointsClient:
             )
             response.raise_for_status()
             return response.json()
+
+    # =========================================================================
+    # Integration Endpoints (GitHub, Pending Intents)
+    # =========================================================================
+
+    async def save_github_token(
+        self,
+        slack_user_id: str,
+        token: str,
+        user_name: Optional[str] = None,
+        scopes: Optional[List[str]] = None
+    ) -> dict:
+        """Save a GitHub access token for a user."""
+        payload = {
+            "slack_user_id": slack_user_id,
+            "github_access_token": token,
+        }
+        if user_name:
+            payload["github_user_name"] = user_name
+        if scopes:
+            payload["github_scopes"] = scopes
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/integrations/github/",
+                json=payload,
+                headers=self.admin_headers,
+                timeout=10.0
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def get_github_token(self, slack_user_id: str) -> Optional[str]:
+        """Get GitHub access token for a user."""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.base_url}/api/v1/integrations/github/{slack_user_id}/",
+                    headers=self.admin_headers,
+                    timeout=10.0
+                )
+                if response.status_code == 404:
+                    return None
+                response.raise_for_status()
+                return response.json().get("github_access_token")
+        except Exception as e:
+            print(f"Failed to get GitHub token: {e}")
+            return None
+
+    async def get_integration(self, slack_user_id: str) -> Optional[dict]:
+        """Get full integration record for a user."""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.base_url}/api/v1/integrations/github/{slack_user_id}/",
+                    headers=self.admin_headers,
+                    timeout=10.0
+                )
+                if response.status_code == 404:
+                    return None
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            print(f"Failed to get integration: {e}")
+            return None
+
+    async def save_pending_intent(self, slack_user_id: str, intent_data: str) -> None:
+        """Save a pending intent to resume after auth."""
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/integrations/pending-intent/",
+                json={"slack_user_id": slack_user_id, "intent_data": intent_data},
+                headers=self.admin_headers,
+                timeout=10.0
+            )
+            response.raise_for_status()
+
+    async def clear_pending_intent(self, slack_user_id: str) -> None:
+        """Clear a pending intent."""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.delete(
+                    f"{self.base_url}/api/v1/integrations/pending-intent/{slack_user_id}/",
+                    headers=self.admin_headers,
+                    timeout=10.0
+                )
+                # Ignore 404 if no intent exists
+                if response.status_code != 404:
+                    response.raise_for_status()
+        except Exception as e:
+            print(f"Failed to clear pending intent: {e}")
+
+    async def mark_project_scanned(self, slack_user_id: str, scanned: bool = True) -> None:
+        """Mark a user's project as scanned."""
+        async with httpx.AsyncClient() as client:
+            response = await client.patch(
+                f"{self.base_url}/api/v1/integrations/github/{slack_user_id}/",
+                json={"project_scanned": scanned},
+                headers=self.admin_headers,
+                timeout=10.0
+            )
+            response.raise_for_status()
+
+    # =========================================================================
+    # Channel Activity Endpoints
+    # =========================================================================
+
+    async def has_posted_in_channel(self, slack_user_id: str, channel_id: str) -> bool:
+        """Check if a user has posted in a channel before."""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.base_url}/api/v1/activity/first-post/{slack_user_id}/{channel_id}/",
+                    headers=self.admin_headers,
+                    timeout=10.0
+                )
+                if response.status_code == 404:
+                    return False
+                response.raise_for_status()
+                return response.json().get("has_posted", False)
+        except Exception as e:
+            print(f"Failed to check channel post: {e}")
+            return False
+
+    async def record_channel_post(self, slack_user_id: str, channel_id: str) -> None:
+        """Record a user's first post in a channel."""
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.base_url}/api/v1/activity/first-post/",
+                json={"slack_user_id": slack_user_id, "channel_id": channel_id},
+                headers=self.admin_headers,
+                timeout=10.0
+            )
+            # 409 Conflict is OK - means already recorded
+            if response.status_code != 409:
+                response.raise_for_status()
+
+    # =========================================================================
+    # User Linking Endpoints
+    # =========================================================================
+
+    async def link_slack_user(self, slack_id: str, email: str) -> Optional[int]:
+        """
+        Link a Slack ID to an existing user found by email.
+        
+        Returns:
+            User ID if linked, None if no matching user found.
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.base_url}/api/v1/users/link-slack/",
+                    json={"slack_id": slack_id, "email": email},
+                    headers=self.admin_headers,
+                    timeout=10.0
+                )
+                if response.status_code == 404:
+                    return None
+                response.raise_for_status()
+                return response.json().get("user_id")
+        except Exception as e:
+            print(f"Failed to link Slack user: {e}")
+            return None
+
+    async def get_user_by_slack_id(self, slack_id: str) -> Optional[int]:
+        """Get user ID by Slack ID."""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self._points_base}/users/{slack_id}/",
+                    headers=self.headers,
+                    timeout=10.0
+                )
+                if response.status_code == 404:
+                    return None
+                response.raise_for_status()
+                return response.json().get("id")
+        except Exception as e:
+            print(f"Failed to get user by Slack ID: {e}")
+            return None

@@ -25,13 +25,6 @@ async def lifespan(app: FastAPI):
     print(f"   LLM Provider: {settings.default_llm_provider}")
     print(f"   Skills Dir: {settings.SKILLS_DIR}")
     
-    # Initialize database
-    # Initialize database
-    from .database import get_db
-    db = get_db()
-    # Initialize all tables (including channel tracking)
-    await db.init_tables()
-    
     # Initialize agent on startup
     agent = get_agent()
     print(f"   Loaded {len(agent.skills)} skills")
@@ -317,14 +310,19 @@ async def github_callback(code: str, state: str):
             user_data = user_resp.json()
             user_name = user_data.get("login", "unknown")
 
-    # Save to database
-    from .database import get_db
-    db = get_db()
+    # Save via API
+    from .skills.mlai_points.client import PointsClient
     
     # state param contains the slack_user_id
     slack_user_id = state
     
-    await db.save_github_token(
+    points_client = PointsClient(
+        base_url=settings.MLAI_BACKEND_URL,
+        api_key=settings.MLAI_API_KEY,
+        internal_api_key=settings.INTERNAL_API_KEY
+    )
+    
+    await points_client.save_github_token(
         slack_user_id=slack_user_id,
         token=access_token,
         user_name=user_name,
@@ -339,7 +337,7 @@ async def github_callback(code: str, state: str):
     )
 
     # Check for pending intent
-    integration = await db.get_integration(slack_user_id)
+    integration = await points_client.get_integration(slack_user_id)
     pending_intent = integration.get("pending_intent") if integration else None
     
     if pending_intent:
@@ -348,7 +346,7 @@ async def github_callback(code: str, state: str):
             intent = json.loads(pending_intent)
             
             # Clear it immediately
-            await db.clear_pending_intent(slack_user_id)
+            await points_client.clear_pending_intent(slack_user_id)
             
             # Resume asynchronously
             import asyncio
@@ -366,20 +364,7 @@ async def _handle_start_here_post(event: dict):
     channel_id = event.get("channel")
     ts = event.get("ts")
     
-    from .database import get_db
-    db = get_db()
-    
-    # Check if user has posted before
-    has_posted = await db.has_posted_in_channel(user_id, channel_id)
-    if has_posted:
-        return
-        
-    print(f"🥳 First post by {user_id} in {channel_id}!")
-    
-    # Record post immediately
-    await db.record_channel_post(user_id, channel_id)
-    
-    # Award points
+    # Use API client instead of direct DB
     from .skills.mlai_points.client import PointsClient
     from .config import get_settings
     settings = get_settings()
@@ -389,6 +374,16 @@ async def _handle_start_here_post(event: dict):
         api_key=settings.MLAI_API_KEY,
         internal_api_key=settings.INTERNAL_API_KEY
     )
+    
+    # Check if user has posted before
+    has_posted = await points_client.has_posted_in_channel(user_id, channel_id)
+    if has_posted:
+        return
+        
+    print(f"🥳 First post by {user_id} in {channel_id}!")
+    
+    # Record post immediately
+    await points_client.record_channel_post(user_id, channel_id)
     
     try:
         from .slack_client import get_bot_user_id

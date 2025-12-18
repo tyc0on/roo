@@ -1,3 +1,11 @@
+"""
+Test User Linking Logic
+
+Tests that when awarding points to a user, the executor:
+1. Checks if the Slack ID is already known via API
+2. If not, fetches the user's email from Slack
+3. Attempts to link the Slack ID to an existing user by email via API
+"""
 import sys
 from unittest.mock import MagicMock
 
@@ -11,76 +19,56 @@ sys.modules["pydantic_settings"] = MagicMock()
 sys.modules["openai"] = MagicMock()
 sys.modules["tenacity"] = MagicMock()
 sys.modules["slack_sdk"] = MagicMock()
-# Mock entire roo.config because it imports pydantic_settings eagerly
 sys.modules["roo.config"] = MagicMock()
 
 import asyncio
 import unittest
 from unittest.mock import patch, AsyncMock
-
-# Must mock get_settings inside config before importing database/executor if they use it at module level
-# (Checking imports... executor imports generic stuff. database imports sqlalchemy)
-
-# We can now import our local modules
-# Note: we need to handle the fact that 'roo' package resolution might still fail if not in path
 import os
 sys.path.append(os.getcwd())
 
-# We need to mock the Database class specifically since we can't import the real one easily
-# due to its heavy dependencies we just mocked out.
-# Let's just mock the import of roo.database entirely?
-# No, we want to test executor logic. Executor imports `get_db` from `..database`.
-
-# Let's verify we can import SkillExecutor
+# Verify we can import SkillExecutor
 try:
     from roo.skills.executor import SkillExecutor
 except ImportError as e:
     print(f"Import failed: {e}")
     sys.exit(1)
 
-# Import Database after mocks
-try:
-    from roo.database import Database
-except ImportError:
-    # Just mock it if import fails due to other deps
-    Database = MagicMock()
-
 # Mock data
 MOCK_SLACK_ID = "U12345"
 MOCK_EMAIL = "test@example.com"
 MOCK_DB_USER_ID = 42
+
 
 class TestUserLinking(unittest.IsolatedAsyncioTestCase):
     
     async def test_user_linking_logic(self):
         """
         Test that the executor:
-        1. Checks for Slack ID (fails)
+        1. Checks for Slack ID via API (fails)
         2. Fetches Slack info (gets email)
-        3. Checks DB by email (succeeds)
-        4. Links Slack ID to user
+        3. Links Slack ID to user via API
         """
         
-        # Mock Database
-        mock_db = AsyncMock(spec=Database)
+        # Mock API Client (used for user linking AND awarding)
+        mock_client = AsyncMock()
         # 1. get_user_by_slack_id returns None (User not found by ID)
-        mock_db.get_user_by_slack_id.return_value = None
-        # 3. get_user_by_email returns ID (User found by email)
-        mock_db.get_user_by_email.return_value = MOCK_DB_USER_ID
+        mock_client.get_user_by_slack_id.return_value = None
+        # 3. link_slack_user returns the user ID (linking succeeded)
+        mock_client.link_slack_user.return_value = MOCK_DB_USER_ID
+        # Award succeeds
+        mock_client.award_points.return_value = {"new_balance": 100}
         
         # Mock Slack Client
-        with patch("roo.skills.executor.get_db", return_value=mock_db), \
-             patch("roo.skills.executor.SkillExecutor._execute_with_llm"), \
+        with patch("roo.skills.executor.SkillExecutor._execute_with_llm"), \
              patch("roo.skills.executor.post_message"), \
              patch("roo.slack_client.get_user_info") as mock_get_user_info:
             
             # 2. Setup Slack Mock to return email
             mock_get_user_info.return_value = {"email": MOCK_EMAIL}
             
-            # Setup Executor and Client
+            # Setup Executor
             executor = SkillExecutor()
-            mock_client = AsyncMock()
-            mock_client.award_points.return_value = {"new_balance": 100}
             
             params = {
                 "action": "award_points", 
@@ -107,18 +95,16 @@ class TestUserLinking(unittest.IsolatedAsyncioTestCase):
             # ASSERTIONS
             
             # 1. Verify get_user_by_slack_id was called
-            mock_db.get_user_by_slack_id.assert_called_with(MOCK_SLACK_ID)
+            mock_client.get_user_by_slack_id.assert_called_with(MOCK_SLACK_ID)
             
             # 2. Verify Slack email lookup happened
             mock_get_user_info.assert_called_with(MOCK_SLACK_ID)
             
-            # 3. Verify get_user_by_email was called with the fetched email
-            mock_db.get_user_by_email.assert_called_with(MOCK_EMAIL)
+            # 3. Verify link_slack_user was called with Slack ID and email
+            mock_client.link_slack_user.assert_called_with(MOCK_SLACK_ID, MOCK_EMAIL)
             
-            # 4. Verify link_user_slack_id was called to link them!
-            mock_db.link_user_slack_id.assert_called_with(MOCK_DB_USER_ID, MOCK_SLACK_ID)
-            
-            print("\n✅ Test Passed: User logic correctly identified email and linked Slack ID.")
+            print("\n✅ Test Passed: User logic correctly identified email and linked Slack ID via API.")
+
 
 if __name__ == "__main__":
     unittest.main()
