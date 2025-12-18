@@ -8,6 +8,7 @@ import re
 import asyncio
 from dataclasses import dataclass
 from typing import Any, Optional
+from difflib import SequenceMatcher
 
 from .loader import Skill
 from ..llm import chat, embed
@@ -469,6 +470,8 @@ Keep the response concise but informative."""
                     action = "book_coworking"
                 elif "cancel" in text_lower and "coworking" in text_lower:
                     action = "cancel_coworking"
+                elif any(w in text_lower for w in ["rate card", "point values", "how much is"]):
+                     action = "view_rate_card"
                 elif any(w in text_lower for w in ["rewards", "perks"]):
                     action = "list_rewards"
                 elif "reward" in text_lower and "request" in text_lower:
@@ -479,7 +482,7 @@ Keep the response concise but informative."""
                     action = "approve_task"
                 elif "reject" in text_lower:
                     action = "reject_task"
-                elif any(w in text_lower for w in ["award", "give points"]):
+                elif any(w in text_lower for w in ["award", "give points", "reward"]):
                     action = "award_points"
                 elif any(w in text_lower for w in ["deduct", "remove points"]):
                     action = "deduct_points"
@@ -767,15 +770,22 @@ Keep the response concise but informative."""
         # =====================================================================
         
         elif action == "create_task":
-            title = params.get("title", "")
-            points = params.get("points", 1)
+            # 1. Parameter Aliases
+            title = params.get("task_title") or params.get("title") or params.get("submission_text")
+            points = params.get("points")
             description = params.get("description", "")
-            portfolio = params.get("portfolio", "events")
+            portfolio = params.get("portfolio", "general")
             due_date = params.get("due_date")
+            assigned_to = params.get("assigned_to_user_id") or params.get("target_user")
             
+            # 2. Validation
             if not title:
-                return "What's the task? I need at least a title (e.g., \"create task title='Fix docs' points=3\")"
+                return "G'day! I need a task title to create the task, mate. (e.g., \"create task 'Fix docs' 5 points\")"
             
+            if not points:
+                return "Crikey! You need to specify how many points this task is worth."
+            
+            # 3. Execution
             result = await client.create_task(
                 admin_slack_id=user_id,
                 title=title,
@@ -783,12 +793,40 @@ Keep the response concise but informative."""
                 description=description,
                 portfolio=portfolio,
                 due_date=due_date,
+                assigned_to_user_id=assigned_to,
                 slack_channel_id=channel_id,
                 slack_thread_ts=thread_ts
             )
             
+            # 4. Response Handling
+            if result.get("error") == "forbidden":
+                return "Sorry mate, but I can't create tasks. You need to be a Points Admin for that! If you reckon you should have access, have a chat with the committee. 🤔"
+            
             task_id = result.get("id")
-            return f"Task created! **#{task_id} - {title}** ({points} pts) 📂 {portfolio}\n\nVolunteers can claim it with \"task claim {task_id}\""
+            pts = result.get("points", points)
+            port = result.get("portfolio", portfolio)
+            
+            assigned_msg = ""
+            if result.get("assigned_to_user_id"):
+                assigned_msg = f" and assigned to <@{result.get('assigned_to_user_id')}>"
+            elif assigned_to:
+                 assigned_msg = f" and assigned to <@{client._clean_slack_id(assigned_to)}>"
+            
+            return f"✅ Beauty! Created task **{title}** worth **{pts} points**{assigned_msg}. Task ID: #{task_id}"
+        
+        elif action == "view_rate_card":
+             card = await client.get_rate_card()
+             if not card:
+                 return "Rate card is empty or unavailable."
+             
+             lines = ["📋 **Standard Point Rates:**\n"]
+             for item in card:
+                 name = item.get("name", "Unknown")
+                 pts = item.get("points", 0)
+                 desc = item.get("description", "")
+                 lines.append(f"• **{name}** ({pts} pts) - {desc}")
+             
+             return "\n".join(lines)
         
         elif action == "approve_task":
             task_id = params.get("task_id")
@@ -823,8 +861,29 @@ Keep the response concise but informative."""
             return f"Task #{task_id} rejected. The volunteer can resubmit if needed."
         
         elif action in ["award_points", "deduct_points", "award", "deduct"]:
+            # Early allowance check for award actions (before LLM/rate card lookup)
+            if action in ["award_points", "award"]:
+                try:
+                    allowance_status = await client.get_admin_allowance(user_id)
+                    if 'error' in allowance_status:
+                        return "Sorry mate, you're not authorized to award points. Only Points Admins can do that. 🔒"
+                    remaining = allowance_status.get('remaining', 0)
+                    if remaining <= 0:
+                        weekly_allowance = allowance_status.get('allowance', 0)
+                        return (
+                            f"You've used your full weekly allowance ({weekly_allowance} pts). "
+                            "It resets on Monday. ⏰"
+                        )
+                    # Store for later use in messages
+                    params['_admin_remaining_allowance'] = remaining
+                    params['_admin_weekly_allowance'] = allowance_status.get('allowance', 0)
+                except Exception as e:
+                    print(f"⚠️ Allowance pre-check failed: {e}")
+                    # Continue anyway - the actual award will fail if not authorized
+
             points = params.get("points", 0)
             reason = params.get("reason", "Manual adjustment")
+
             
             # Get Roo's bot ID to filter it from target users
             from ..slack_client import get_bot_user_id
@@ -867,50 +926,62 @@ Keep the response concise but informative."""
                 return "Who should I award points to? Mention them like @user (e.g., 'award 5 points to @Jasmine')"
             
             # Extract points amount if not in params
+            # Extract points amount if not in params
             if not points:
-                # --- Smart Awards Logic (Rate Card) ---
+                # 1. Try Regex fallback first (in case params missed explicit points)
+                pts_match = re.search(r'(?<![a-zA-Z])([+-]?\d+)\s*(?:points?|pts?)?', text, re.IGNORECASE)
+                if pts_match:
+                    found_val = int(pts_match.group(1))
+                    has_keyword = "point" in pts_match.group(0).lower() or "pts" in pts_match.group(0).lower()
+                    if has_keyword or abs(found_val) < 1000:
+                        points = found_val
+            
+            # 2. Smart Awards Logic (Rate Card) - Only if points still missing
+            if not points:
                 if reason:
                     print(f"🕵️ No points specified. Checking Rate Card for '{reason}'...")
                     try:
                         rate_card = await client.get_rate_card()
-                        matched_item = None
+                        matches = []
                         reason_lower = reason.lower()
+                        
                         for item in rate_card:
-                            alias = item.get("alias", "").lower()
-                            name = item.get("name", "").lower()
-                            if alias and alias == reason_lower:
-                                matched_item = item
-                                break
-                            if name and name in reason_lower:
-                                matched_item = item
-                                break
-                        if matched_item:
-                            points = matched_item.get("points")
-                            print(f"✅ Found match: {matched_item['name']} ({points} pts)")
-                            if matched_item['name'].lower() not in reason_lower:
-                                reason = f"{reason} ({matched_item['name']})"
+                            name = item.get("name", "")
+                            desc = item.get("description", "") or ""
+                            # Enhanced scoring
+                            score = 0
+                            if reason_lower in name.lower(): score += 50
+                            if reason_lower in desc.lower(): score += 30
+                            
+                            seq_score = SequenceMatcher(None, reason_lower, name.lower()).ratio() * 100
+                            if seq_score > 60: score += seq_score
+                            
+                            if score > 40:
+                                matches.append((score, item))
+                        
+                        matches.sort(key=lambda x: x[0], reverse=True)
+                        
+                        if matches:
+                            top_match = matches[0][1]
+                            top_pts = top_match.get("points")
+                            top_name = top_match.get("name")
+                            cleanup_target = client._clean_slack_id(target_slack_ids[0]) if target_slack_ids else "the user"
+                            
+                            # Include remaining allowance context if available
+                            remaining_info = ""
+                            if params.get('_admin_remaining_allowance'):
+                                remaining_info = f" (You have {params['_admin_remaining_allowance']} pts left this week.)"
+                            
+                            if len(matches) == 1 or matches[0][0] > 80:
+                                return f"I found a match in the Rate Card: '{top_name}' is worth {top_pts} points. Should I award {top_pts} points to <@{cleanup_target}>?{remaining_info}"
+                            else:
+                                options = [f"'{m[1].get('name')}' ({m[1].get('points')} pts)" for m in matches[:3]]
+                                return f"That sounds like it could be {options[0]} or {options[1] if len(options)>1 else ''}. Which one is it?{remaining_info}"
+                                
                     except Exception as e:
                         print(f"⚠️ Smart award lookup failed: {e}")
 
-                # If still no points, try regex fallback
-                if not points:
-                    # Look for isolated numbers or numbers followed by 'points'
-                    # Avoid matching inside words/IDs (like U12345)
-                    pts_match = re.search(r'(?<![a-zA-Z])([+-]?\d+)\s*(?:points?|pts?)?', text)
-                    
-                    if pts_match:
-                        # Check if this number is likely a user ID part (e.g. if we are looking at "U12345" and matched "12345")
-                        # Simple heuristic: points are usually small (<1000) or explicitly labeled "points"
-                        found_val = int(pts_match.group(1))
-                        
-                        # Only accept raw numbers if they are smallish (to avoid IDs) OR if "points" keyword is present
-                        has_keyword = "point" in pts_match.group(0).lower() or "pts" in pts_match.group(0).lower()
-                        
-                        if has_keyword or abs(found_val) < 1000:
-                            points = found_val
-                    
-                    if not points:
-                        return "How many points? (e.g., \"award @user +5 for helping out\")"
+                return "How many points should I award? (e.g., \"award @user 5 points\")"
             
             # Make negative for deduct action
             if action in ["deduct_points", "deduct"] and points > 0:
