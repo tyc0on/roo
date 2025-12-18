@@ -12,7 +12,6 @@ from difflib import SequenceMatcher
 
 from .loader import Skill
 from ..llm import chat, embed
-from ..database import get_db
 from ..slack_client import post_message
 from ..config import get_settings
 
@@ -145,19 +144,14 @@ JSON:"""
         has_vector_search = "vector" in skill.content.lower() or "embedding" in skill.content.lower()
         
         context = ""
-        if has_vector_search and params.get("query"):
-            # Perform vector search
-            try:
-                db = get_db()
-                search_results = await db.vector_search(
-                    query=params["query"],
-                    table="user_expertise",
-                    limit=params.get("limit", 5)
-                )
-                if search_results:
-                    context = f"\n\nVector search results:\n{search_results}"
-            except Exception as e:
-                print(f"   Vector search failed: {e}")
+        # Note: Vector search is disabled until API endpoint is implemented
+        # if has_vector_search and params.get("query"):
+        #     try:
+        #         search_results = await api_client.search_user_expertise(params["query"])
+        #         if search_results:
+        #             context = f"\n\nVector search results:\n{search_results}"
+        #     except Exception as e:
+        #         print(f"   Vector search failed: {e}")
         
         prompt = f"""You are Roo, executing the "{skill.name}" skill.
 
@@ -196,20 +190,9 @@ Keep the response concise but informative."""
             # Try to extract from the text directly
             query = text
         
-        try:
-            db = get_db()
-            search_results = await db.vector_search(
-                query=query,
-                table="user_expertise",
-                limit=params.get("limit", 5)
-            )
-            
-            # Let LLM format the response with the results
-            return await self._execute_with_llm(skill, text, {**params, "search_results": search_results}, user_id)
-            
-        except Exception as e:
-            print(f"   Connect users search failed: {e}")
-            return await self._execute_with_llm(skill, text, params, user_id)
+        # Note: Vector search is disabled until API endpoint is implemented
+        # For now, fall back to LLM-based execution
+        return await self._execute_with_llm(skill, text, params, user_id)
     
     async def _execute_content_factory(
         self,
@@ -232,13 +215,20 @@ Keep the response concise but informative."""
             
             return f"I can help write that article! To get started, I just need to know the {' and '.join(missing)}."
         
+        # Get a PointsClient for API calls
+        settings = get_settings()
+        from .mlai_points.client import PointsClient
+        api_client = PointsClient(
+            base_url=settings.MLAI_BACKEND_URL,
+            api_key=settings.MLAI_API_KEY,
+            internal_api_key=settings.INTERNAL_API_KEY
+        )
+        
         # Check for GitHub Token (required for publishing updates)
-        db = get_db()
-        github_token = await db.get_github_token(user_id)
+        github_token = await api_client.get_github_token(user_id)
         
         if not github_token:
              # Send Auth Button
-            settings = get_settings()
             auth_url = f"{settings.SLACK_APP_URL}/auth/github/login?state={user_id}"
             
             blocks = [
@@ -276,7 +266,7 @@ Keep the response concise but informative."""
                 "channel": channel_id,
                 "ts": thread_ts
             })
-            await db.save_pending_intent(user_id, intent_data)
+            await api_client.save_pending_intent(user_id, intent_data)
             
             if channel_id:
                 post_message(channel_id, "Please connect GitHub", thread_ts=thread_ts, blocks=blocks)
@@ -284,7 +274,7 @@ Keep the response concise but informative."""
             return f"Please connect your GitHub account here: {auth_url}"
 
         # 2. Check for Project Scanned status
-        integration = await db.get_integration(user_id)
+        integration = await api_client.get_integration(user_id)
         if not integration or not integration.get("project_scanned"):
             # Only allow if user specifically requested a scan or we can infer it? 
             # Ideally we redirect them to scan first.
@@ -1019,9 +1009,8 @@ Keep the response concise but informative."""
                 try:
                     # Deduplication: Link Slack ID to existing email user if needed
                     try:
-                        db = get_db()
                         # Check if this Slack ID is already known
-                        existing_user_id = await db.get_user_by_slack_id(target_id)
+                        existing_user_id = await client.get_user_by_slack_id(target_id)
                         
                         if not existing_user_id:
                             # Not found by Slack ID -> Check if we know this user by email
@@ -1030,10 +1019,9 @@ Keep the response concise but informative."""
                             u_email = u_info.get("email")
                             
                             if u_email:
-                                email_user_id = await db.get_user_by_email(u_email)
-                                if email_user_id:
-                                    print(f"🔗 Found existing user {email_user_id} for email {u_email}. Linking Slack ID {target_id}...")
-                                    await db.link_user_slack_id(email_user_id, target_id)
+                                linked_user_id = await client.link_slack_user(target_id, u_email)
+                                if linked_user_id:
+                                    print(f"🔗 Linked Slack ID {target_id} to existing user {linked_user_id} via email {u_email}")
                     except Exception as e:
                         print(f"⚠️ User linking failed (continuing to award): {e}")
 
@@ -1074,13 +1062,20 @@ Keep the response concise but informative."""
     ) -> str:
         """Execute the GitHub Integration skill."""
         
+        # Get API client for GitHub token operations
+        settings = get_settings()
+        from .mlai_points.client import PointsClient
+        api_client = PointsClient(
+            base_url=settings.MLAI_BACKEND_URL,
+            api_key=settings.MLAI_API_KEY,
+            internal_api_key=settings.INTERNAL_API_KEY
+        )
+        
         # 1. Check for token
-        db = get_db()
-        token = await db.get_github_token(user_id)
+        token = await api_client.get_github_token(user_id)
         
         if not token:
             # Send Auth Button
-            settings = get_settings()
             auth_url = f"{settings.SLACK_APP_URL}/auth/github/login?state={user_id}"
             
             blocks = [
@@ -1127,7 +1122,6 @@ Keep the response concise but informative."""
         if not ClientClass:
             return "Skill configuration error: Client not found."
             
-        settings = get_settings()
         client = ClientClass(
             content_factory_url=settings.CONTENT_FACTORY_URL,
             api_key=settings.CONTENT_FACTORY_API_KEY
@@ -1139,7 +1133,7 @@ Keep the response concise but informative."""
             job_id = result.get("job_id")
             
             # Mark project as scanned on success
-            await db.mark_project_scanned(user_id, True)
+            await api_client.mark_project_scanned(user_id, True)
             
             return f"Started scanning **{repo_name}**! (Job ID: {job_id})\nI'll let you know when it's done."
             

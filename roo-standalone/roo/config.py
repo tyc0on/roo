@@ -16,9 +16,6 @@ class Settings(BaseSettings):
         extra="ignore"
     )
     
-    # Database
-    DATABASE_URL: str = "postgresql+asyncpg://roo:password@localhost:5432/roo"
-    
     # Slack
     SLACK_BOT_TOKEN: str
     SLACK_SIGNING_SECRET: str
