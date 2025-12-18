@@ -355,17 +355,28 @@ class PointsClient:
             return self._admin_cache[slack_user_id]
         
         try:
+            details = await self.get_admin_details(slack_user_id)
+            is_admin = details is not None
+            self._admin_cache[slack_user_id] = is_admin
+            return is_admin
+        except Exception:
+            return False
+
+    async def get_admin_details(self, slack_user_id: str) -> Optional[dict]:
+        """Get details for a Points Admin."""
+        try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     f"{self._points_base}/admins/{slack_user_id}/",
                     headers=self.headers,
                     timeout=10.0
                 )
-                is_admin = response.status_code == 200
-                self._admin_cache[slack_user_id] = is_admin
-                return is_admin
-        except Exception:
-            return False
+                if response.status_code == 200:
+                    return response.json()
+                return None
+        except Exception as e:
+            print(f"Failed to fetch admin details: {e}")
+            return None
     
     async def create_task(
         self,
@@ -564,6 +575,36 @@ class PointsClient:
                 params={"slack_user_id": admin_slack_id},
                 headers=self.admin_headers,
                 timeout=10.0
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def system_award_points(
+        self,
+        admin_slack_id: str,
+        target_slack_id: str,
+        points: int,
+        reason: str
+    ) -> dict:
+        """
+        System award points (bypasses client-side admin checks).
+        Use this for automated system awards where the 'admin' is the bot itself.
+        """
+        payload = {
+            "admin_slack_id": admin_slack_id,
+            "target_slack_id": self._clean_slack_id(target_slack_id),
+            "points": points,
+            "reason": reason,
+        }
+        
+        async with httpx.AsyncClient() as client:
+            # We use the same endpoint but skip the client-side pre-flight checks
+            # The backend must be configured to accept the internal API key
+            response = await client.post(
+                f"{self._points_base}/admin/award/",
+                json=payload,
+                headers=self.admin_headers,
+                timeout=15.0
             )
             response.raise_for_status()
             return response.json()
