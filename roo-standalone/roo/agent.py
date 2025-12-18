@@ -305,7 +305,8 @@ Respond with ONLY the skill name (e.g., "connect_users" or "none"):"""
     
     async def _general_response(self, text: str) -> str:
         """Generate a general conversational response."""
-        prompt = """You are Roo, the friendly AI assistant for the MLAI community.
+        skill_list = "\n".join(f"- {s.name}: {s.description}" for s in self.skills)
+        prompt = f"""You are Roo, the friendly AI assistant for the MLAI community.
         
 Your personality:
 - Warm and approachable, like a helpful local
@@ -313,6 +314,10 @@ Your personality:
 - Helpful and encouraging
 - Keep responses concise but friendly
 
+Your Capabilities / Skills:
+{skill_list}
+
+If the user asks "what can you do?" or "what are you?", summarize your role and list your skills in a friendly, conversational way. Don't just dump the raw list, explain it naturally.
 Respond to the user's message in a helpful, conversational way."""
 
         try:
