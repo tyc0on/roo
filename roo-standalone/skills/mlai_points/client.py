@@ -270,6 +270,33 @@ class PointsClient:
             print(f"❌ Failed to fetch rate card: {e}")
             return []
 
+    async def get_admin_allowance(self, slack_user_id: str) -> dict:
+        """
+        Get the admin's weekly allowance status.
+        
+        Returns:
+            Dict with 'allowance', 'used', 'remaining' or 'error' if not an admin.
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self._points_base}/admin/allowance/",
+                    params={"slack_id": slack_user_id},
+                    headers=self.admin_headers,
+                    timeout=10.0
+                )
+                if response.status_code == 404:
+                    return {'error': 'Not a points admin'}
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return {'error': 'Not a points admin'}
+            raise
+        except Exception as e:
+            print(f"❌ Failed to fetch admin allowance: {e}")
+            return {'error': str(e)}
+
     async def list_rewards(self, slack_user_id: Optional[str] = None) -> List[dict]:
         """List available rewards."""
         params = {}
@@ -462,6 +489,23 @@ class PointsClient:
         cleaned_target = self._clean_slack_id(target_slack_id)
         if admin_slack_id == cleaned_target and points > 0:
             raise ValueError("Nice try! You can't award points to yourself. 😉")
+
+        # 3. Pre-flight Weekly Allowance Check (for positive awards only)
+        if points > 0:
+            allowance = await self.get_admin_allowance(admin_slack_id)
+            if 'error' in allowance:
+                raise PermissionError(allowance['error'])
+            remaining = allowance.get('remaining', 0)
+            if remaining <= 0:
+                raise ValueError(
+                    f"You've used your full weekly allowance ({allowance.get('allowance', 0)} pts). "
+                    "It resets on Monday."
+                )
+            if points > remaining:
+                raise ValueError(
+                    f"You only have {remaining} pts left this week (out of {allowance.get('allowance', 0)}). "
+                    f"Try awarding {remaining} or less."
+                )
 
         payload = {
             "admin_slack_id": admin_slack_id,

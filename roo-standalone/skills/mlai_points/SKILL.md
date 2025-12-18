@@ -31,6 +31,20 @@ This skill enables Roo to interact with the MLAI Points System via API, allowing
 - Award or deduct points manually
 - Set coworking capacity overrides
 
+### Admin Weekly Allowance
+
+Each Points Admin has a weekly allowance limiting how many points they can award. The allowance resets every Monday (ISO week).
+
+When an admin attempts to award points:
+1. Roo checks if they're a Points Admin
+2. Roo checks their remaining weekly allowance
+3. If exhausted, Roo informs them immediately (no LLM call needed)
+4. If the requested amount exceeds remaining allowance, Roo suggests awarding less
+
+Example responses:
+- "You've used your full weekly allowance (100 pts). It resets on Monday. ⏰"
+- "You only have 15 pts left this week. Try awarding 15 or less."
+
 ## Parameters
 
 - **action**: The action to perform (required) - e.g., "balance", "book", "claim", "submit", "award"
@@ -64,7 +78,7 @@ Parse user messages to identify the action and parameters:
 | `task create ...` | create_task | (Admin) "Create task: Fix docs, 3 points" |
 | `task approve <id>` | approve_task | (Admin) "Approve task 42" |
 | `points award @user +5 reason` | award_points | (Admin) "Give @sam 5 points for helping out" |
-| `reward @user for <activity>` | award_points | (Admin) "Reward @sam for newsletter" (points auto-detected from reason) |
+| `reward @user for <activity>` | award_points | (Admin) "Reward @sam for newsletter" (suggests points from rate card) |
 
 ## Workflow
 
@@ -152,6 +166,15 @@ No worries, you'll get there! 💪
 Sorry mate, you'll need to be a Points Admin to do that.
 
 If you reckon you should have access, have a chat with the committee. 🤔
+```
+
+### Smart Award Suggestion
+```
+I found a match in the Rate Card: 'Draft newsletter edition' is worth 12 points. Should I award 12 points to @alice?
+```
+or for distinct matches:
+```
+That sounds like it could be 'Draft newsletter edition' (12 pts) or 'Newsletter full production' (24 pts). Which one is it?
 ```
 
 ## Error Handling
