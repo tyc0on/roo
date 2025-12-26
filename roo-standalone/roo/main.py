@@ -115,6 +115,11 @@ async def slack_events(request: Request):
              print("⚠️ Start Here channel ID not found")
 
         if start_here_id and event.get("channel") == start_here_id:
+            # Ignore thread replies - only award points for top-level posts
+            if event.get("thread_ts"):
+                print(f"🧵 Ignoring thread reply in #_start-here from {event.get('user')}")
+                return JSONResponse(status_code=200, content={})
+
             import asyncio
             asyncio.create_task(_handle_start_here_post(event))
             return JSONResponse(status_code=200, content={})
